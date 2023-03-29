@@ -31,28 +31,31 @@ else:
 Session = sessionmaker(bind=engine)
 session = Session()
 
+# Special encoding needed to be compatible with emojis which are in some playlist titles:
 class Base(object):
     __table_args__ = {
-        "mysql_default_charset": "utf8mb4",
-        "mysql_collate": "utf8mb4_bin",
+        'mysql_default_charset': 'utf8mb4',
+        'mysql_collate': 'utf8mb4_bin',
     }
 
 Base = declarative_base(cls=Base)
 
 # Association/Junction table for the many-to-many relationship between playlists and songs:
-playlist_track_table = Table(
-    'playlist_track',
-    Base.metadata,
-    Column('playlist_id', Integer, ForeignKey('playlist.id'), primary_key=True),
-    Column('track_id', Integer, ForeignKey('track.id'), primary_key=True),
-)
+#   (See https://docs.sqlalchemy.org/en/20/orm/basic_relationships.html#association-object)
+class PlaylistTrack(Base):
+    __tablename__ = 'playlist_track'
+    playlist_id = Column(Integer, ForeignKey('playlist.id'), primary_key=True)
+    track_id = Column(Integer, ForeignKey('track.id'), primary_key=True)
+    track_pos = Column(Integer, primary_key=True)
+
+    track = relationship('Track')
 
 
 class Playlist(Base):
     __tablename__ = 'playlist'
 
-    id = Column(Integer, primary_key=True, autoincrement=False)
-    name = Column(String(250))
+    id = Column(Integer, primary_key=True, autoincrement=False, unique=True, nullable=False)
+    name = Column(String(250), nullable=False)
     is_collaborative = Column(Boolean)
     # modified_at = Column(Time)
     num_tracks = Column(Integer)
@@ -60,24 +63,21 @@ class Playlist(Base):
     num_followers = Column(Integer)
     duration_ms = Column(Integer)
 
-    tracks = relationship('Track', secondary=playlist_track_table, backref='playlists')
+    tracks = relationship('PlaylistTrack')
 
 
 class Track(Base):
     __tablename__ = 'track'
 
-    id = Column(Integer, primary_key=True)
-    track_uri = Column(String(100))
-    track_name = Column(String(250))
-    artist_name = Column(String(200))
+    id = Column(Integer, primary_key=True, unique=True, nullable=False)
+    track_uri = Column(String(100), unique=True, nullable=False, index=True)
+    track_name = Column(String(250), nullable=False)
+    artist_name = Column(String(200), nullable=False)
     duration_ms = Column(Integer)
 
 
 # Ensure that the tables are created in the db:
 Base.metadata.create_all(engine)
-
-# track_test = Track(track_name='test_name', artist_name='test_artist', duration_ms='1')
-
 
 load_dotenv()
 
@@ -107,14 +107,16 @@ for slice_i in range(NUM_OF_SLICES_TO_LOAD):
         for track in playlist['tracks']:
             track_uri = track['track_uri']
             track_entity = None
-            if False:
-            #if track_uri in batched_track_entities:
+            a = PlaylistTrack(track_pos=track['pos'])
+            if track_uri in batched_track_entities:
                 track_entity = batched_track_entities[track_uri]
             else:
                 track_entity = Track(track_uri=track_uri, track_name=track['track_name'],
                                      artist_name=track['artist_name'], duration_ms=track['duration_ms'])
                 batched_track_entities[track_uri] = track_entity
-            playlist_entity.tracks.append(track_entity)
+
+            a.track = track_entity
+            playlist_entity.tracks.append(a)
 
 # batched_tracks2 = [track for playlist in batched_playlists for track in playlist['tracks']]
 
