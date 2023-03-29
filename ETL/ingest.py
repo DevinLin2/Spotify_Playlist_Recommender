@@ -6,7 +6,9 @@ from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy import create_engine, ForeignKey, Table, Column, Integer, String, Boolean
 from sqlalchemy_utils import database_exists, create_database
 
-engine = create_engine('mysql+pymysql://root:@localhost:6603/351_proj_db?charset=utf8mb4', connect_args={'charset':'utf8mb4'})
+load_dotenv()
+
+engine = create_engine(os.getenv('SQL_CONN_STRING'))
 
 # Create database if it does not exist.
 if not database_exists(engine.url):
@@ -65,8 +67,6 @@ class Track(Base):
 
 # Ensure that the tables are created in the db:
 Base.metadata.create_all(engine)
-
-load_dotenv()
 
 MILLION_PLAYLIST_DATASET_DATA_PATH = os.getenv('MILLION_PLAYLIST_DATASET_DATA_PATH')
 
