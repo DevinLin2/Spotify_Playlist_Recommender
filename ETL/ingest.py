@@ -15,19 +15,6 @@ else:
     # Connect the database if exists.
     engine.connect()
 
-# metadata = MetaData()
-#
-# tracks_table = Table(
-#     'tracks',
-#     metadata,
-#     Column('track_name', String(255), unique=False),
-#     Column('artist_name', String(255), unique=False),
-#     Column('duration_ms', Float()),
-#     extend_existing=True
-# )
-# # Use the metadata to create the table
-# metadata.create_all(engine)
-
 Session = sessionmaker(bind=engine)
 session = Session()
 
@@ -44,11 +31,11 @@ Base = declarative_base(cls=Base)
 #   (See https://docs.sqlalchemy.org/en/20/orm/basic_relationships.html#association-object)
 class PlaylistTrack(Base):
     __tablename__ = 'playlist_track'
-    playlist_id = Column(Integer, ForeignKey('playlist.id'), primary_key=True)
-    track_id = Column(Integer, ForeignKey('track.id'), primary_key=True)
+    playlist_row_id = Column(Integer, ForeignKey('playlist.id'), primary_key=True)
+    track_row_id = Column(Integer, ForeignKey('track.id'), primary_key=True)
     track_pos = Column(Integer, primary_key=True)
 
-    track = relationship('Track')
+    track = relationship('Track', backref='playlisttrack')
 
 
 class Playlist(Base):
@@ -63,14 +50,14 @@ class Playlist(Base):
     num_followers = Column(Integer)
     duration_ms = Column(Integer)
 
-    tracks = relationship('PlaylistTrack')
+    tracks = relationship('PlaylistTrack', backref='playlist')
 
 
 class Track(Base):
     __tablename__ = 'track'
 
     id = Column(Integer, primary_key=True, unique=True, nullable=False)
-    track_uri = Column(String(100), unique=True, nullable=False, index=True)
+    track_id = Column(String(100), unique=True, nullable=False, index=True)
     track_name = Column(String(250), nullable=False)
     artist_name = Column(String(200), nullable=False)
     duration_ms = Column(Integer)
@@ -111,17 +98,14 @@ for slice_i in range(NUM_OF_SLICES_TO_LOAD):
             if track_uri in batched_track_entities:
                 track_entity = batched_track_entities[track_uri]
             else:
-                track_entity = Track(track_uri=track_uri, track_name=track['track_name'],
+                track_id = track_uri[track_uri.rindex(':')+1:]
+                track_entity = Track(track_id=track_id, track_name=track['track_name'],
                                      artist_name=track['artist_name'], duration_ms=track['duration_ms'])
                 batched_track_entities[track_uri] = track_entity
 
             a.track = track_entity
             playlist_entity.tracks.append(a)
 
-# batched_tracks2 = [track for playlist in batched_playlists for track in playlist['tracks']]
-
 session.add_all(batched_playlists)
-
-# session.add_all(batched_track_entities.values())
 
 session.commit()
