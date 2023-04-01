@@ -1,5 +1,5 @@
-
 import { useEffect, useState } from "react";
+import {useSession, signIn, signOut} from 'next-auth/react';
 import Button from 'react-bootstrap/Button';
 import Row from 'react-bootstrap/Row';
 import Col from 'react-bootstrap/Col';
@@ -12,6 +12,7 @@ import Head from 'next/head'
 export default function Home() {
 
   const [userInput, setUserInput] = useState("");
+  const {data: session} = useSession();
 
   function handleSubmit() {
     console.log(userInput);
@@ -28,6 +29,8 @@ export default function Home() {
           <Navbar.Brand>
             Spotify Playlist Recommender
           </Navbar.Brand>
+          {session && <Button onClick={() => signOut()}>Sign Out</Button>}
+          {!session && <Button onClick={() => signIn()}>Sign In</Button>}
         </Container>
       </Navbar>
       <Form>
