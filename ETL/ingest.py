@@ -4,9 +4,10 @@ import os
 from dotenv import load_dotenv
 import json
 
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship, backref
 from sqlalchemy import create_engine, ForeignKey, Column, Integer, Date, DateTime, String, JSON, Boolean, Float
 from sqlalchemy_utils import database_exists, create_database
+from collections import defaultdict
 
 import statistics
 
@@ -50,7 +51,7 @@ class PlaylistTrack(Base):
     track_row_id = Column(Integer, ForeignKey('track.row_id'), primary_key=True)
     track_pos = Column(Integer, primary_key=True)
 
-    track = relationship('Track', backref='playlisttrack')
+    track = relationship('Track', backref=backref('playlist_tracks', cascade="save-update, delete, delete-orphan"))
 
 
 def calc_avg(playlist_entity, track_lambda):
@@ -99,16 +100,16 @@ class Playlist(Base):
     __tablename__ = 'playlist'
 
     mpd_id = Column(Integer, primary_key=True, autoincrement=False, unique=True, nullable=False)
-    name = Column(String(250), nullable=False)
-    mpd_generated_at = Column(DateTime)
-    modified_at = Column(Date)
-    num_tracks = Column(Integer)
-    num_artists = Column(Integer)
-    num_albums = Column(Integer)
-    num_followers = Column(Integer)
-    num_edits = Column(Integer)
-    is_collaborative = Column(Boolean)
-    duration_ms_total = Column(Integer)
+    name = Column(String(300), nullable=False)
+    mpd_generated_at = Column(DateTime, nullable=False)
+    modified_at = Column(Date, nullable=False)
+    num_tracks = Column(Integer, nullable=False)
+    num_artists = Column(Integer, nullable=False)
+    num_albums = Column(Integer, nullable=False)
+    num_followers = Column(Integer, nullable=False)
+    num_edits = Column(Integer, nullable=False)
+    is_collaborative = Column(Boolean, nullable=False)
+    duration_ms_total = Column(Integer, nullable=False)
 
     top_genre_1 = Column(String(50))
     top_genre_2 = Column(String(50))
@@ -118,34 +119,46 @@ class Playlist(Base):
         for feature_name in FEATURE_NAMES:
             vars()[feature_aggregate_attr_name(feature_name, aggregate_name)] = Column(Float)
 
-    tracks = relationship('PlaylistTrack', backref='playlist')
+    tracks = relationship('PlaylistTrack', backref='playlist', cascade="save-update, delete, delete-orphan")
 
 
 class Track(Base):
     __tablename__ = 'track'
 
     row_id = Column(Integer, primary_key=True, autoincrement=True, unique=True, nullable=False)
-    track_id = Column(String(22), primary_key=True, unique=True, nullable=False, index=True)
-    track_name = Column(String(250), nullable=False)
-    artist_id = Column(String(22), nullable=False)
+    track_id = Column(String(22), unique=True, nullable=False, index=True)
+    track_name = Column(String(300), nullable=False)
+    artist_row_id = Column(Integer, ForeignKey('artist.row_id'), nullable=False)
+    # artist_id = Column(String(200), nullable=False)
     artist_name = Column(String(200), nullable=False)
-    artist_genres = Column(JSON)
     album_id = Column(String(22), nullable=False)
-    album_name = Column(String(200), nullable=False)
+    album_name = Column(String(300), nullable=False)
 
-    acousticness = Column(Float)
-    danceability = Column(Float)
-    duration_ms = Column(Integer)
-    energy = Column(Float)
-    instrumentalness = Column(Float)
-    key = Column(Integer)
-    liveness = Column(Float)
-    loudness = Column(Float)
-    mode = Column(Integer)
-    speechiness = Column(Float)
-    tempo = Column(Float)
-    time_signature = Column(Integer)
-    valence = Column(Float)
+    artist = relationship('Artist', backref='tracks')
+
+    acousticness = Column(Float, nullable=False)
+    danceability = Column(Float, nullable=False)
+    duration_ms = Column(Integer, nullable=False)
+    energy = Column(Float, nullable=False)
+    instrumentalness = Column(Float, nullable=False)
+    key = Column(Integer, nullable=False)
+    liveness = Column(Float, nullable=False)
+    loudness = Column(Float, nullable=False)
+    mode = Column(Integer, nullable=False)
+    speechiness = Column(Float, nullable=False)
+    tempo = Column(Float, nullable=False)
+    time_signature = Column(Integer, nullable=False)
+    valence = Column(Float, nullable=False)
+
+
+class Artist(Base):
+    __tablename__ = 'artist'
+    row_id = Column(Integer, primary_key=True, autoincrement=True, unique=True, nullable=False)
+    artist_id = Column(String(22), unique=True, nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    genres = Column(JSON, nullable=False)
+    followers = Column(Integer, nullable=False)
+    popularity = Column(Integer, nullable=False)
 
 
 # Ensure that the tables are created in the db:
@@ -164,8 +177,8 @@ def sleeper():
         print(f'Sleeping for {sleep_seconds}s to not overload the Spotify API...')
         time.sleep(sleep_seconds)
 
-
-START_SLICE = 0
+# did 16 for 1 and 20 for 1
+START_SLICE = 22
 NUM_OF_SLICES_TO_LOAD = 1
 SLICE_SIZE = 1000
 
@@ -186,6 +199,13 @@ artist_ids_to_pull = set()
 loaded_playlist_min_pid = (START_SLICE + NUM_OF_SLICES_TO_LOAD) * SLICE_SIZE
 loaded_playlist_max_pid = 0
 
+# Map of Track IDs to respective MPD Track JSON data.
+new_tracks_mpd_data = {}
+
+unique_track_ids = set()
+needed_artist_ids = set()
+track_id_to_playlist_track_entities = defaultdict(set)
+
 for slice_i in range(START_SLICE, START_SLICE + NUM_OF_SLICES_TO_LOAD):
     print('Loading MPD slice ' + str(slice_i) + '...')
     start_playlist_i = slice_i * SLICE_SIZE
@@ -197,9 +217,9 @@ for slice_i in range(START_SLICE, START_SLICE + NUM_OF_SLICES_TO_LOAD):
     slice_playlists = mpd_slice_data['playlists']
     for playlist in slice_playlists:
         playlist_pid = playlist['pid']
-        # if playlist_pid > 1004:
+        # if playlist_pid > 1002:
         #     break  # TODO REMOVE BREAK - THIS IS JUST FOR SMALLER TESTING DATA.
-        if (playlist_pid % 100 == 0):
+        if playlist_pid % 100 == 0:
             print(f'Loading playlists in range {playlist_pid} to {playlist_pid + 100}...')
         loaded_playlist_min_pid = min(playlist_pid, loaded_playlist_min_pid)
         loaded_playlist_max_pid = max(playlist_pid, loaded_playlist_max_pid)
@@ -221,57 +241,96 @@ for slice_i in range(START_SLICE, START_SLICE + NUM_OF_SLICES_TO_LOAD):
         # Add Track Entity and Playlist Track objects, but no API data yet:
         for track in playlist['tracks']:
             track_uri = track['track_uri']
-            track_entity = None
             track_id = track_uri[track_uri.rindex(':') + 1:]
-            if track_id in batched_track_entities:
-                track_entity = batched_track_entities[track_id]
-                track_entity.playlist_tracks_backref.append(playlist_entity.tracks)
-            else:
-                # print(f'Trying to load track from database: {track_id}...')
-                database_track = session.query(Track).filter(Track.track_id == track_id).first()
-                if database_track is None:
-                    artist_uri = track['artist_uri']
-                    artist_id = artist_uri[artist_uri.rindex(':') + 1:]
-                    album_uri = track['album_uri']
-                    album_id = album_uri[album_uri.rindex(':') + 1:]
-                    track_entity = Track(track_id=track_id,
-                                         track_name=track['track_name'],
-                                         artist_id=artist_id,
-                                         artist_name=track['artist_name'],
-                                         album_id=album_id,
-                                         album_name=track['album_name'],
-                                         duration_ms=track['duration_ms'])
-                    artist_ids_to_pull.add(artist_id)
-                    tracks_to_pull_list.append(track_entity)
-                else:
-                    track_entity = database_track
-                    # track_entity = copy.deepcopy(database_track)
-                    # track_entity = Track(track_id=track_id,
-                    #                      track_name=track['track_name'],
-                    #                      artist_id=database_track.artist_id,
-                    #                      artist_name=track['artist_name'],
-                    #                      album_id=database_track.album_id,
-                    #                      album_name=track['album_name'],
-                    #                      duration_ms=track['duration_ms'])
-                    # for feature_name in FEATURE_NAMES:
-                    #     setattr(track_entity, feature_name, getattr(database_track, feature_name))
+            playlist_track_entity = PlaylistTrack(playlist_mpd_id=playlist_pid,
+                                                  track_pos=track['pos'])
 
-                track_entity.playlist_tracks_backref = [playlist_entity.tracks]
-                batched_track_entities[track_id] = track_entity
+            playlist_track_entity.playlist_tracks_backref = playlist_entity.tracks
+            unique_track_ids.add(track_id)
+
+            artist_uri = track['artist_uri']
+            artist_id = artist_uri[artist_uri.rindex(':') + 1:]
+            needed_artist_ids.add(artist_id)
+
+            playlist_entity.tracks.append(playlist_track_entity)
+            track_id_to_playlist_track_entities[track_id].add(playlist_track_entity)
 
             all_playlist_track_ids.append(track_id)
-            playlist_track_link = PlaylistTrack(track_pos=track['pos'])
-            track_entity.playlist_track = playlist_track_link
-            playlist_track_link.track = track_entity
-            playlist_entity.tracks.append(playlist_track_link)
 
-all_unique_track_ids = list(batched_track_entities.keys())
+            new_tracks_mpd_data[track_id] = track
 
-print(f'Finished loading {str(NUM_OF_SLICES_TO_LOAD)} slices for a total of '
+# NOTE: These database fetching queries can be extremely large depending on how many Tracks/Artists are queried for -
+# so the max_allowed_packet setting may need to be set in MySQL for example.
+print(f"Fetching existing database Tracks (need {len(unique_track_ids)})...")
+# Fetch the wanted tracks that are already in the database:
+database_tracks = session.query(Track).filter(Track.track_id.in_(unique_track_ids)).all()
+database_track_ids = set()
+
+#
+database_artists = dict()
+
+import time
+
+print(f"Adding {len(database_tracks)} Tracks from database...")
+s = time.perf_counter()
+def add_track_entity(track_entity):
+    track_id = track_entity.track_id
+    database_track_ids.add(track_id)
+    batched_track_entities[track_id] = track_entity
+    # track_entity.playlist_track = playlist_track_entity # ???
+    for playlist_track_entity in track_id_to_playlist_track_entities[track_id]:
+        playlist_track_entity.track = track_entity
+
+for database_track in database_tracks:
+    add_track_entity(database_track)
+    del new_tracks_mpd_data[database_track.track_id]
+print(f'(Took {time.perf_counter() - s}s to add from database.')
+
+
+# Optimization Note: MUCH faster to just fetch all the artists separately here than to get them off of the fetched
+# tracks above. I believe this is because doing so off of the track objects does a single lazy load query for each
+# track artist, rather than smartly batching the queries together like we do here:
+print(f"Fetching existing database Artists (need {len(needed_artist_ids)})...")
+s = time.perf_counter()
+database_artists_queried = session.query(Artist).filter(Artist.artist_id.in_(needed_artist_ids)).all()
+for database_artist in database_artists_queried:
+    database_artists[database_artist.artist_id] = database_track.artist
+print(f'(Took {time.perf_counter() - s}s to fetch.')
+
+print("Loading new Tracks from in-memory MPD data...")
+
+pulled_artist_id_to_track_entities = defaultdict(set)
+
+for track_id, mpd_track_data in new_tracks_mpd_data.items():
+    if track_id not in batched_track_entities:
+        artist_uri = mpd_track_data['artist_uri']
+        artist_id = artist_uri[artist_uri.rindex(':') + 1:]
+        album_uri = mpd_track_data['album_uri']
+        album_id = album_uri[album_uri.rindex(':') + 1:]
+        track_entity = Track(track_id=track_id,
+                             track_name=mpd_track_data['track_name'],
+                             artist_name=mpd_track_data['artist_name'],
+                             album_id=album_id,
+                             album_name=mpd_track_data['album_name'],
+                             duration_ms=mpd_track_data['duration_ms'])
+        # track_entity.artist_id = artist_id  # We want to ref artist_id internally, but not in the actual schema.
+        pulled_artist_id_to_track_entities[artist_id].add(track_entity)
+        if artist_id in database_artists:
+            track_entity.artist = database_artists[artist_id]
+        else:
+            artist_ids_to_pull.add(artist_id)
+        tracks_to_pull_list.append(track_entity)
+
+        add_track_entity(track_entity)
+
+print(f'Loaded {str(NUM_OF_SLICES_TO_LOAD)} MPD slices (PIDs'
+      f' {loaded_playlist_min_pid}'
+      f'-{loaded_playlist_max_pid}), filling in existing database data. There is a total of '
       f'{str(len(batched_playlists))} playlists, '
       f'{str(len(all_playlist_track_ids))} playlist tracks, '
-      f'{str(len(all_unique_track_ids))} unique tracks, '
-      f'and {str(len(tracks_to_pull_list))} new tracks to pull.')
+      f'{str(len(unique_track_ids))} unique tracks, '
+      f'{str(len(tracks_to_pull_list))} new tracks to pull, '
+      f'and {str(len(artist_ids_to_pull))} artists to pull.')
 
 print(f'\nPulling {len(tracks_to_pull_list)} Tracks from Spotify API...')
 
@@ -288,7 +347,7 @@ while index < len(tracks_to_pull_list):
     track_batch_start_index = index
     track_batch_end_index = min(track_batch_start_index + MAX_SPOTIFY_TRACKS_PER_REQ, len(tracks_to_pull_list))
     index = track_batch_end_index
-    print('Pulling tracks ' + str(track_batch_start_index) + ' to ' +
+    print('Pulling Tracks ' + str(track_batch_start_index) + ' to ' +
           str(track_batch_end_index) + ' from Spotify API...')
     track_batch = tracks_to_pull_list[track_batch_start_index:track_batch_end_index]
     track_batch_ids = list(map(lambda track_entity: track_entity.track_id, track_batch))
@@ -306,9 +365,17 @@ while index < len(tracks_to_pull_list):
 
         # If track is not found in Spotify, then this probably means it was deleted from Spotify for whatever reason:
         if track_audio_features is None:
-            for playlist_tracks in track_entity.playlist_tracks_backref:
-                if track_entity.playlist_track in playlist_tracks:
-                    playlist_tracks.remove(track_entity.playlist_track)
+            print(f"No audio features found for Track ID: {track_entity.track_id}")
+            with open("failed_track_ids.txt", "a+") as no_audio_features_file:
+                no_audio_features_file.write(f'{track_entity.track_id}\n')
+
+            print(f"r t {len(track_entity.playlist_tracks)}")
+            for playlist_track in track_entity.playlist_tracks:
+                p = playlist_track.playlist
+                print(f"r {p}")
+                print(f"r b {len(playlist_track.playlist_tracks_backref)}")
+                playlist_track.playlist_tracks_backref.remove(playlist_track)
+                print(f"r a {len(playlist_track.playlist_tracks_backref)}")
             continue
 
         # Fill Track Spotify Features:
@@ -323,8 +390,6 @@ while index < len(tracks_to_pull_list):
 
 print('\nPulling ' + str(len(artist_ids_to_pull)) + ' Artists from Spotify API...')
 
-from collections import defaultdict
-
 MAX_SPOTIFY_ARTISTS_PER_REQ = 50
 artist_ids = list(artist_ids_to_pull)
 pulled_artist_genres = dict()
@@ -333,7 +398,7 @@ while artist_id_index < len(artist_ids):
     artist_batch_start_index = artist_id_index
     artist_batch_end_index = min(artist_batch_start_index + MAX_SPOTIFY_ARTISTS_PER_REQ, len(artist_ids))
     artist_id_index = artist_batch_end_index
-    print('Pulling artists ' + str(artist_batch_start_index) + ' to ' +
+    print('Pulling Artists ' + str(artist_batch_start_index) + ' to ' +
           str(artist_batch_end_index) + ' from Spotify API...')
     artist_batch = artist_ids[artist_batch_start_index:artist_batch_end_index]
     artists_response = spotify.artists(artists=artist_batch)['artists']
@@ -343,25 +408,33 @@ while artist_id_index < len(artist_ids):
         artist_data = artists_response[j]
         pulled_artist_genres[artist_id] = artist_data['genres']
 
+        artist_entity = Artist(artist_id=artist_id,
+                               name=artist_data['name'],
+                               genres=artist_data['genres'],
+                               followers=artist_data['followers']['total'],
+                               popularity=artist_data['popularity'])
+        for track_entity in pulled_artist_id_to_track_entities[artist_id]:
+            track_entity.artist = artist_entity
+
 print('\nFinished pulling from Spotify API.\n')
 
 print('Calculating Playlist Genres...')
 
 for playlist_entity in batched_playlists:
-    if (playlist_entity.mpd_id % 100 == 0):
+    if playlist_entity.mpd_id % 100 == 0:
         print(f'Calculating genres for playlists in range {playlist_entity.mpd_id} to'
               f' {playlist_entity.mpd_id + 100}...')
     genre_counts = defaultdict(float)
     # print(playlist_entity.name)
     for playlist_track in playlist_entity.tracks:
-        track_artist_id = playlist_track.track.artist_id
-        if playlist_track.track.artist_genres is None:
-            track_artist_genres = []
-            for track_artist_genre in pulled_artist_genres[track_artist_id]:
-                track_artist_genres.append(track_artist_genre)
-            playlist_track.track.artist_genres = track_artist_genres
+        # track_artist_id = playlist_track.track.artist_id
+        # if playlist_track.track.artist_genres is None:
+        #     track_artist_genres = []
+        #     for track_artist_genre in pulled_artist_genres[track_artist_id]:
+        #         track_artist_genres.append(track_artist_genre)
+        #     playlist_track.track.artist_genres = track_artist_genres
 
-        for track_artist_genre in playlist_track.track.artist_genres:
+        for track_artist_genre in playlist_track.track.artist.genres:
             genre_counts[track_artist_genre] += 1
 
         # if hasattr(playlist_track.track, 'artist_ids'):
@@ -423,8 +496,8 @@ session.query(Playlist).where(Playlist.mpd_id.in_(range(playlist_id_start_range,
 session.commit()
 
 print('Loading to database...')
-
+s = time.perf_counter()
 session.add_all(batched_playlists)
 session.commit()
 
-print('Finished loading to database.')
+print(f'Finished loading to database. (Took {time.perf_counter() - s}s).')
