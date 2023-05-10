@@ -13,7 +13,7 @@ async def root():
 @app.get("/square/{num}")
 async def get_task(num):
     # Get the task from the table.
-    return int(num)**2
+    return {int(num)**2}
 
 @app.get("/find-playlists/{q}")
 async def foo():
