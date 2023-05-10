@@ -1,9 +1,11 @@
+# import copy
+import datetime
 import os
 from dotenv import load_dotenv
 import json
 
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
-from sqlalchemy import create_engine, ForeignKey, Table, Column, Integer, String, Boolean, Float
+from sqlalchemy import create_engine, ForeignKey, Column, Integer, Date, DateTime, String, JSON, Boolean, Float
 from sqlalchemy_utils import database_exists, create_database
 
 import statistics
@@ -11,6 +13,7 @@ import statistics
 import time
 
 import faulthandler
+
 faulthandler.enable()
 
 load_dotenv()
@@ -27,6 +30,7 @@ else:
 Session = sessionmaker(bind=engine)
 session = Session()
 
+
 # Special encoding needed to be compatible with emojis which are in some playlist titles:
 class Base(object):
     __table_args__ = {
@@ -42,8 +46,8 @@ Base = declarative_base(cls=Base)
 #   (See https://docs.sqlalchemy.org/en/20/orm/basic_relationships.html#association-object)
 class PlaylistTrack(Base):
     __tablename__ = 'playlist_track'
-    playlist_row_id = Column(Integer, ForeignKey('playlist.id', ondelete='CASCADE'), primary_key=True)
-    track_row_id = Column(Integer, ForeignKey('track.id'), primary_key=True)
+    playlist_mpd_id = Column(Integer, ForeignKey('playlist.mpd_id', ondelete='CASCADE'), primary_key=True)
+    track_row_id = Column(Integer, ForeignKey('track.row_id'), primary_key=True)
     track_pos = Column(Integer, primary_key=True)
 
     track = relationship('Track', backref='playlisttrack')
@@ -72,8 +76,19 @@ AGGREGATES = {
     'std': calc_std
 }
 
-FEATURE_NAMES = ['acousticness', 'danceability', 'energy', 'instrumentalness', 'liveness', 'loudness', 'speechiness',
-                 'tempo', 'valence', 'key', 'time_signature']
+FEATURE_NAMES = ['acousticness',
+                 'danceability',
+                 'duration_ms',
+                 'energy',
+                 'instrumentalness',
+                 'key',
+                 'liveness',
+                 'loudness',
+                 'mode',
+                 'speechiness',
+                 'tempo',
+                 'time_signature',
+                 'valence']
 
 
 def feature_aggregate_attr_name(feature_name, aggregate_name):
@@ -83,14 +98,17 @@ def feature_aggregate_attr_name(feature_name, aggregate_name):
 class Playlist(Base):
     __tablename__ = 'playlist'
 
-    id = Column(Integer, primary_key=True, autoincrement=False, unique=True, nullable=False)
+    mpd_id = Column(Integer, primary_key=True, autoincrement=False, unique=True, nullable=False)
     name = Column(String(250), nullable=False)
-    is_collaborative = Column(Boolean)
-    # modified_at = Column(Time)
+    mpd_generated_at = Column(DateTime)
+    modified_at = Column(Date)
     num_tracks = Column(Integer)
+    num_artists = Column(Integer)
     num_albums = Column(Integer)
     num_followers = Column(Integer)
-    duration_ms = Column(Integer)
+    num_edits = Column(Integer)
+    is_collaborative = Column(Boolean)
+    duration_ms_total = Column(Integer)
 
     top_genre_1 = Column(String(50))
     top_genre_2 = Column(String(50))
@@ -100,44 +118,34 @@ class Playlist(Base):
         for feature_name in FEATURE_NAMES:
             vars()[feature_aggregate_attr_name(feature_name, aggregate_name)] = Column(Float)
 
-    # acousticness = Column(Float)
-    # danceability = Column(Float)
-    # energy = Column(Float)
-    # instrumentalness = Column(Float)
-    # liveness = Column(Float)
-    # loudness = Column(Float)
-    # speechiness = Column(Float)
-    # tempo = Column(Float)
-    # valence = Column(Float)
-
-    # TODO REFACTOR - can probably utilize lambdas better rather than mapping to new lists:
-
     tracks = relationship('PlaylistTrack', backref='playlist')
 
 
 class Track(Base):
     __tablename__ = 'track'
 
-    id = Column(Integer, primary_key=True, unique=True, nullable=False)
-    track_id = Column(String(100), unique=True, nullable=False, index=True)
+    row_id = Column(Integer, primary_key=True, autoincrement=True, unique=True, nullable=False)
+    track_id = Column(String(22), primary_key=True, unique=True, nullable=False, index=True)
     track_name = Column(String(250), nullable=False)
-    artist_id = Column(String(100), nullable=False)
+    artist_id = Column(String(22), nullable=False)
     artist_name = Column(String(200), nullable=False)
+    artist_genres = Column(JSON)
+    album_id = Column(String(22), nullable=False)
+    album_name = Column(String(200), nullable=False)
 
     acousticness = Column(Float)
     danceability = Column(Float)
+    duration_ms = Column(Integer)
     energy = Column(Float)
     instrumentalness = Column(Float)
+    key = Column(Integer)
     liveness = Column(Float)
     loudness = Column(Float)
+    mode = Column(Integer)
     speechiness = Column(Float)
     tempo = Column(Float)
+    time_signature = Column(Integer)
     valence = Column(Float)
-
-    key = Column(Integer)
-    time_signature = Column(String(10))
-
-    duration_ms = Column(Integer)
 
 
 # Ensure that the tables are created in the db:
@@ -146,43 +154,68 @@ Base.metadata.create_all(engine)
 MILLION_PLAYLIST_DATASET_DATA_PATH = os.getenv('MILLION_PLAYLIST_DATASET_DATA_PATH')
 
 sleepCount = 0
+
+
 def sleeper():
     global sleepCount
     sleepCount += 1
     if sleepCount % 100 == 0:
-        print('Sleeping to not overload the Spotify API...')
-        time.sleep(60)
+        sleep_seconds = 1
+        print(f'Sleeping for {sleep_seconds}s to not overload the Spotify API...')
+        time.sleep(sleep_seconds)
 
 
-START_SLICE = 1
+START_SLICE = 0
 NUM_OF_SLICES_TO_LOAD = 1
 SLICE_SIZE = 1000
 
 batched_playlists = []
 batched_track_entities = {}
-all_track_ids = []
+tracks_to_pull_list = []
+
+# All Track IDs of playlist tracks. Note that these are not unique, and will have duplicates for every time a track is
+# in a playlist.
+all_playlist_track_ids = []
+artist_ids_to_pull = set()
 
 # print('Loading existing database Tracks...')
 # # Track entities already in the database:
 # existing_track_entities = session.query(Track).all()
 # print('Loaded db Tracks.')
 
+loaded_playlist_min_pid = (START_SLICE + NUM_OF_SLICES_TO_LOAD) * SLICE_SIZE
+loaded_playlist_max_pid = 0
+
 for slice_i in range(START_SLICE, START_SLICE + NUM_OF_SLICES_TO_LOAD):
-    print('Extracting slice ' + str(slice_i) + '...')
+    print('Loading MPD slice ' + str(slice_i) + '...')
     start_playlist_i = slice_i * SLICE_SIZE
     end_playlist_i = ((slice_i + 1) * SLICE_SIZE) - 1
     slice_file_name = 'mpd.slice.' + str(start_playlist_i) + '-' + str(end_playlist_i) + '.json'
     mpd_slice_data = json.load(open(os.path.join(MILLION_PLAYLIST_DATASET_DATA_PATH, slice_file_name)))
+    slice_generated_on = mpd_slice_data['info']['generated_on']
+    slice_generated_date_utc = datetime.datetime.fromisoformat(slice_generated_on)
     slice_playlists = mpd_slice_data['playlists']
     for playlist in slice_playlists:
-        if playlist['pid'] > 1200:
-            break  # TODO REMOVE BREAK - THIS IS JUST FOR SMALLER TESTING DATA.
-        playlist_entity = Playlist(id=playlist['pid'], name=playlist['name'],
-                                   is_collaborative=bool(playlist['collaborative']),
+        playlist_pid = playlist['pid']
+        # if playlist_pid > 1004:
+        #     break  # TODO REMOVE BREAK - THIS IS JUST FOR SMALLER TESTING DATA.
+        if (playlist_pid % 100 == 0):
+            print(f'Loading playlists in range {playlist_pid} to {playlist_pid + 100}...')
+        loaded_playlist_min_pid = min(playlist_pid, loaded_playlist_min_pid)
+        loaded_playlist_max_pid = max(playlist_pid, loaded_playlist_max_pid)
+        last_modified_epoch_seconds_utc = playlist['modified_at']
+        last_modified_date_utc = datetime.datetime.utcfromtimestamp(last_modified_epoch_seconds_utc).date()
+        playlist_entity = Playlist(mpd_id=playlist_pid,
+                                   name=playlist['name'],
+                                   mpd_generated_at=slice_generated_date_utc,
+                                   modified_at=last_modified_date_utc,
                                    num_tracks=playlist['num_tracks'],
+                                   num_artists=playlist['num_artists'],
                                    num_albums=playlist['num_albums'],
                                    num_followers=playlist['num_followers'],
-                                   duration_ms=playlist['duration_ms'])
+                                   num_edits=playlist['num_edits'],
+                                   is_collaborative=(playlist['collaborative'] == 'true'),
+                                   duration_ms_total=playlist['duration_ms'])
         batched_playlists.append(playlist_entity)
 
         # Add Track Entity and Playlist Track objects, but no API data yet:
@@ -194,91 +227,93 @@ for slice_i in range(START_SLICE, START_SLICE + NUM_OF_SLICES_TO_LOAD):
                 track_entity = batched_track_entities[track_id]
                 track_entity.playlist_tracks_backref.append(playlist_entity.tracks)
             else:
-                track_entity = Track(track_id=track_id, track_name=track['track_name'],
-                                     artist_name=track['artist_name'], duration_ms=track['duration_ms'])
-                batched_track_entities[track_id] = track_entity
-                all_track_ids.append(track_id)
+                # print(f'Trying to load track from database: {track_id}...')
+                database_track = session.query(Track).filter(Track.track_id == track_id).first()
+                if database_track is None:
+                    artist_uri = track['artist_uri']
+                    artist_id = artist_uri[artist_uri.rindex(':') + 1:]
+                    album_uri = track['album_uri']
+                    album_id = album_uri[album_uri.rindex(':') + 1:]
+                    track_entity = Track(track_id=track_id,
+                                         track_name=track['track_name'],
+                                         artist_id=artist_id,
+                                         artist_name=track['artist_name'],
+                                         album_id=album_id,
+                                         album_name=track['album_name'],
+                                         duration_ms=track['duration_ms'])
+                    artist_ids_to_pull.add(artist_id)
+                    tracks_to_pull_list.append(track_entity)
+                else:
+                    track_entity = database_track
+                    # track_entity = copy.deepcopy(database_track)
+                    # track_entity = Track(track_id=track_id,
+                    #                      track_name=track['track_name'],
+                    #                      artist_id=database_track.artist_id,
+                    #                      artist_name=track['artist_name'],
+                    #                      album_id=database_track.album_id,
+                    #                      album_name=track['album_name'],
+                    #                      duration_ms=track['duration_ms'])
+                    # for feature_name in FEATURE_NAMES:
+                    #     setattr(track_entity, feature_name, getattr(database_track, feature_name))
+
                 track_entity.playlist_tracks_backref = [playlist_entity.tracks]
+                batched_track_entities[track_id] = track_entity
+
+            all_playlist_track_ids.append(track_id)
             playlist_track_link = PlaylistTrack(track_pos=track['pos'])
             track_entity.playlist_track = playlist_track_link
             playlist_track_link.track = track_entity
             playlist_entity.tracks.append(playlist_track_link)
 
-print('Finished extracting ' + str(NUM_OF_SLICES_TO_LOAD) + ' slices for a total of ' + str(len(batched_playlists)) +
-      ' playlists and ' + str(len(all_track_ids)) + ' tracks.')
+all_unique_track_ids = list(batched_track_entities.keys())
 
-print('Extracting Tracks from Spotify API...')
+print(f'Finished loading {str(NUM_OF_SLICES_TO_LOAD)} slices for a total of '
+      f'{str(len(batched_playlists))} playlists, '
+      f'{str(len(all_playlist_track_ids))} playlist tracks, '
+      f'{str(len(all_unique_track_ids))} unique tracks, '
+      f'and {str(len(tracks_to_pull_list))} new tracks to pull.')
+
+print(f'\nPulling {len(tracks_to_pull_list)} Tracks from Spotify API...')
 
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
 spotify = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials())
 
-artist_ids_set = set()
-
 # Tracks which need data from the Spotify API:
-tracks_to_pull_list = list(batched_track_entities.values())
+# tracks_to_pull_list = list(batched_track_entities.values())
 MAX_SPOTIFY_TRACKS_PER_REQ = 100
-i = 0
-while i < len(tracks_to_pull_list):
-    track_batch_start_index = i
+index = 0
+while index < len(tracks_to_pull_list):
+    track_batch_start_index = index
     track_batch_end_index = min(track_batch_start_index + MAX_SPOTIFY_TRACKS_PER_REQ, len(tracks_to_pull_list))
-    i = track_batch_end_index
-    print('Extracting tracks ' + str(track_batch_start_index) + ' to ' +
+    index = track_batch_end_index
+    print('Pulling tracks ' + str(track_batch_start_index) + ' to ' +
           str(track_batch_end_index) + ' from Spotify API...')
     track_batch = tracks_to_pull_list[track_batch_start_index:track_batch_end_index]
     track_batch_ids = list(map(lambda track_entity: track_entity.track_id, track_batch))
+
+    # for track_id in track_batch_ids:
+    #     database_track = session.query(Track).filter(Track.track_id == track_id).first()
+    #     if database_track is None:
+
     audio_features_response = spotify.audio_features(tracks=track_batch_ids)
-    sleeper()
-
-    # Make 2 tracks requests, because the max for tracks is 50, but the max for audio features is 100:
-    track_batch_ids_1 = track_batch_ids[0:50]
-    # see https://spotipy.readthedocs.io/en/2.22.1/#spotipy.client.Spotify.tracks
-    track_data_response = spotify.tracks(tracks=track_batch_ids_1)['tracks']
-    sleeper()
-
-    track_batch_ids_2 = track_batch_ids[50:100]
-    if len(track_batch_ids_2) > 0:
-        track_data_response.extend(spotify.tracks(tracks=track_batch_ids_2)['tracks'])
     sleeper()
 
     for j in range(len(track_batch)):
         track_entity = track_batch[j]
         track_audio_features = audio_features_response[j]
-        track_data = track_data_response[j]
 
         # If track is not found in Spotify, then this probably means it was deleted from Spotify for whatever reason:
-        if track_data is None:
+        if track_audio_features is None:
             for playlist_tracks in track_entity.playlist_tracks_backref:
                 if track_entity.playlist_track in playlist_tracks:
                     playlist_tracks.remove(track_entity.playlist_track)
             continue
 
-        # TODO REFACTOR CACHE ARTISTS
-        # see https://spotipy.readthedocs.io/en/2.22.1/#spotipy.client.Spotify.artists
-
-        # track_entity.num_artists = len(track_data.artists)
-        # track_entity.genres = [genre for artist in track_data.artists for genre in artist]
-        # track_entity.artists_genres = track_data.artists
-        track_entity.artist_ids = []
-        for artist in track_data['artists']:
-            artist_ids_set.add(artist['id'])
-            track_entity.artist_ids.append(artist['id'])
-
-        # Fill Track Audio Features:
-        # TODO REFACTOR LOOP ON FEATURES
-        track_entity.acousticness = track_audio_features['acousticness']
-        track_entity.danceability = track_audio_features['danceability']
-        track_entity.energy = track_audio_features['energy']
-        track_entity.instrumentalness = track_audio_features['instrumentalness']
-        track_entity.liveness = track_audio_features['liveness']
-        track_entity.loudness = track_audio_features['loudness']
-        track_entity.speechiness = track_audio_features['speechiness']
-        track_entity.tempo = track_audio_features['tempo']
-        track_entity.valence = track_audio_features['valence']
-        track_entity.key = track_audio_features['key']
-        track_entity.time_signature = track_audio_features['time_signature']
-
+        # Fill Track Spotify Features:
+        for feature_name in FEATURE_NAMES:
+            setattr(track_entity, feature_name, track_audio_features[feature_name])
 
 # def get_track_features(track_entity):
 #     return [track_entity.acousticness, track_entity.danceability, track_entity.energy, track_entity.instrumentalness,
@@ -286,19 +321,19 @@ while i < len(tracks_to_pull_list):
 #             track_entity.valence, track_entity.key, track_entity.time_signature]
 
 
-print('Extracting ' + str(len(artist_ids_set)) + ' Artists from Spotify API...')
+print('\nPulling ' + str(len(artist_ids_to_pull)) + ' Artists from Spotify API...')
 
 from collections import defaultdict
 
 MAX_SPOTIFY_ARTISTS_PER_REQ = 50
-artist_ids = list(artist_ids_set)
-artist_genres = dict()
+artist_ids = list(artist_ids_to_pull)
+pulled_artist_genres = dict()
 artist_id_index = 0
 while artist_id_index < len(artist_ids):
     artist_batch_start_index = artist_id_index
     artist_batch_end_index = min(artist_batch_start_index + MAX_SPOTIFY_ARTISTS_PER_REQ, len(artist_ids))
     artist_id_index = artist_batch_end_index
-    print('Extracting artists ' + str(artist_batch_start_index) + ' to ' +
+    print('Pulling artists ' + str(artist_batch_start_index) + ' to ' +
           str(artist_batch_end_index) + ' from Spotify API...')
     artist_batch = artist_ids[artist_batch_start_index:artist_batch_end_index]
     artists_response = spotify.artists(artists=artist_batch)['artists']
@@ -306,29 +341,41 @@ while artist_id_index < len(artist_ids):
     for j in range(len(artist_batch)):
         artist_id = artist_batch[j]
         artist_data = artists_response[j]
-        artist_genres[artist_id] = artist_data['genres']
+        pulled_artist_genres[artist_id] = artist_data['genres']
 
-print('Finished extracting from Spotify API.')
+print('\nFinished pulling from Spotify API.\n')
 
 print('Calculating Playlist Genres...')
 
 for playlist_entity in batched_playlists:
+    if (playlist_entity.mpd_id % 100 == 0):
+        print(f'Calculating genres for playlists in range {playlist_entity.mpd_id} to'
+              f' {playlist_entity.mpd_id + 100}...')
     genre_counts = defaultdict(float)
     # print(playlist_entity.name)
     for playlist_track in playlist_entity.tracks:
-        # print(playlist_track)
-        if hasattr(playlist_track.track, 'artist_ids'):
-            # print(playlist_track.track)
-            for artist_id in playlist_track.track.artist_ids:
-                # print(artist_id)
-                for genre in artist_genres[artist_id]:
-                    # print(genre)
-                    genre_counts[genre] += 1 / len(playlist_track.track.artist_ids)
-        else:
-            pass # SHOULD NEVER HAPPEN, AS INVALID TRACKS SHOULD HAVE BEEN REMOVED BEFORE THIS STAGE.
+        track_artist_id = playlist_track.track.artist_id
+        if playlist_track.track.artist_genres is None:
+            track_artist_genres = []
+            for track_artist_genre in pulled_artist_genres[track_artist_id]:
+                track_artist_genres.append(track_artist_genre)
+            playlist_track.track.artist_genres = track_artist_genres
+
+        for track_artist_genre in playlist_track.track.artist_genres:
+            genre_counts[track_artist_genre] += 1
+
+        # if hasattr(playlist_track.track, 'artist_ids'):
+        # print(playlist_track.track)
+        # for artist_id in playlist_track.track.artist_ids:
+        #     # print(artist_id)
+        #     for genre in artist_genres[artist_id]:
+        #         # print(genre)
+        #         genre_counts[genre] += 1 / len(playlist_track.track.artist_ids)
+        # else:
+        #     pass # SHOULD NEVER HAPPEN, AS INVALID TRACKS SHOULD HAVE BEEN REMOVED BEFORE THIS STAGE.
 
     top_genres = sorted(genre_counts.items(), key=lambda x: x[1], reverse=True)[:3]
-    # TODO REFACTOR
+    # TODO REFACTOR:
     if len(top_genres) >= 1:
         playlist_entity.top_genre_1 = top_genres[0][0]
         if len(top_genres) >= 2:
@@ -365,21 +412,19 @@ for playlist_entity in batched_playlists:
     # playlist_entity.key = playlist_entity.get_avg(lambda t: t.track.key)
     # playlist_entity.time_signature = playlist_entity.get_avg(lambda t: t.track.time_signature)
 
-print('Deleting old database data...')
-
+playlist_id_start_range = loaded_playlist_min_pid
+playlist_id_end_range = loaded_playlist_max_pid
+print(f'Deleting old database playlists from PID {playlist_id_start_range} to {playlist_id_end_range}...')
 # Note: Deleting the playlist cascade deletes the PlaylistTrack associations, but the tracks have to be deleted
 # separately since they are one to many with PlaylistTracks.
-playlist_id_start_range = SLICE_SIZE * START_SLICE
-playlist_id_end_range = (SLICE_SIZE * (START_SLICE + NUM_OF_SLICES_TO_LOAD))
-session.query(Playlist).where(Playlist.id.in_(range(playlist_id_start_range, playlist_id_end_range))).delete()
+session.query(Playlist).where(Playlist.mpd_id.in_(range(playlist_id_start_range, playlist_id_end_range + 1))).delete()
 
-session.query(Track).where(Track.track_id.in_(all_track_ids)).delete()
+# session.query(Track).where(Track.track_id.in_(all_unique_track_ids)).delete()
 session.commit()
 
 print('Loading to database...')
 
 session.add_all(batched_playlists)
-
 session.commit()
 
 print('Finished loading to database.')
