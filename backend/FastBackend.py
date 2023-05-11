@@ -6,6 +6,7 @@ import numpy as np
 import json
 
 import sqlalchemy as db
+from sqlalchemy.sql import text
 from sqlalchemy.orm import sessionmaker
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -19,6 +20,7 @@ import os
 
 
 from nlpForSpotify import nl2features
+from QueryBuilder import build_query
 
 
 
@@ -67,34 +69,13 @@ async def get_tracks(lim):
 
 
 
-
-
-
-
-
-
 @app.get("/find-playlists-from-nl/{q}")
 async def foo(q):
-    """
-    artists = ['Michael Jackson', 'Taylor Swift']
+    q = build_query( nl2features(q.replace('`', ''))).replace('`', '')
+    temp = conn.execute(q).fetchall()
+ #   print(temp)
 
-    genres = ['Pop', 'Country']
+  #  for i in temp:
+   #     id1 = i['mpd_id']
 
-    acousticness = 1
-    danceability = 1
-    energy = 0
-    instrumentalness = 1
-    liveness = -1
-
-    d = dict()
-    d['artists'] = artists
-    d['genres'] = genres
-    d['acousticness'] = acousticness
-    d['danceability'] = danceability
-    d['energy'] = energy
-    d['instrumentalness'] = instrumentalness
-    d['liveness'] = liveness
-
-    """
-
-    return {"features" : nl2features(q)}
+    return temp
