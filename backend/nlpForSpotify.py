@@ -9,8 +9,8 @@ nltk.download('wordnet')
 nltk.download('omw-1.4')
 from nltk.corpus import wordnet
 
-artists_names = pandas.read_csv("artists_unique.csv")["artist_name"].values
-genre_names = pandas.read_csv("genres1_unique.csv")["top_genre_1"].values
+artists_names = pandas.read_csv("artists_unique.csv")["name"].values
+genre_names = pandas.read_csv("genres1_unique.csv")["gen"].values
 nlp = spacy.load("en_core_web_sm")
 
 categories = ["acousticness",
@@ -138,6 +138,7 @@ def nl2features(iput):
 
     features_dict['artists'] = names_found
     features_dict['genres'] = genres_found
+
 
     
     return features_dict
