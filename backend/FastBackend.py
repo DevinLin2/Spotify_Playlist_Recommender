@@ -73,9 +73,38 @@ async def get_tracks(lim):
 async def foo(q):
     q = build_query( nl2features(q.replace('`', ''))).replace('`', '')
     temp = conn.execute(q).fetchall()
- #   print(temp)
+    print(type(temp))
+    print(type(temp[0]))
 
-  #  for i in temp:
-   #     id1 = i['mpd_id']
+    lst = []
+    for i in temp:
+        d = dict()
+        d['mpd_id'] = i['mpd_id']
+        d['playlist_name'] = i['pname']
 
-    return temp
+        temp2 = conn.execute(
+            f"""
+            SELECT distinct track_id, track_name, aname
+            FROM master2
+            WHERE mpd_id = {d['mpd_id']}
+            LIMIT 12;
+            """)
+        
+        lst2 = []
+
+        for j in temp2:
+            d2 = dict()
+            #d2['mpd_id'] = d['mpd_id']
+            #d2['playlist_name'] = i['pname']
+            d2['track_name'] = j['track_name']
+            d2['aname'] = j['aname']
+            d2['track_id'] = j['track_id']
+
+            lst2.append(d2)
+
+        d['songs'] = lst2
+
+        lst.append(d)
+
+
+    return lst
