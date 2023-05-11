@@ -15,12 +15,33 @@ export default function Home() {
   const [userInput, setUserInput] = useState("");
   const { data: session } = useSession();
   const [showResult, setShowResult] = useState(false);
+  const [results, setResults] = useState([]);
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-    console.log(userInput);
+    const playlistResponse = await fetch(`http://localhost:8000/square/` + userInput);
+    const playlistProps = await playlistResponse.json();
+    setResults(playlistProps);
+    setResults([
+      { name: "playlist1", tracks: ["song1", "song2", "song3"] },
+      { name: "playlist2", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist3", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist4", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist5", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist6", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist7", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist8", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist9", tracks: ["song4", "song5", "song6"] },
+      { name: "playlist10", tracks: ["song4", "song5", "song6"] }
+    ])
     setShowResult(true);
   }
+
+  // useEffect(() => {
+  //   if (showResult) {
+  //     console.log(results);
+  //   }
+  // }, [results]);
 
   return (
     <div>
@@ -55,25 +76,26 @@ export default function Home() {
           </Row>
           {showResult && <div>
             <Row>
-              <Col>
-                Results:
-              </Col>
+              <Col>Results:</Col>
             </Row>
-            <Row>
-              <Col>
-                <Card style={{ width: '18rem' }}>
-                  <Card.Img variant="top" src="https://i.scdn.co/image/ab67706c0000bebbc8dfff3cf472a74090fd14fc" />
-                  <Card.Body>
-                    <Card.Title>Lofi Hop Hop Radio 2023</Card.Title>
-                    <Card.Text>
-                      List of first few songs
-                    </Card.Text>
-                    <Button variant="primary" href="https://open.spotify.com/playlist/05OkqemhVmD27zXfdnyNsy">Go to Playlist</Button>
-                  </Card.Body>
-                </Card>
-              </Col>
+            <Row xs={1} md={2} className="g-4">
+              {Array.from({ length: 10 }).map((_, idx) => (
+                <Col>
+                  <Card>
+                    <Card.Img variant="top" src="holder.js/100px160" />
+                    <Card.Body>
+                      <Card.Title>{results[idx].name}</Card.Title>
+                      <Card.Text>
+                        {results[idx].tracks[0]}<br />
+                        {results[idx].tracks[1]}<br />
+                        {results[idx].tracks[2]}<br />
+                      </Card.Text>
+                    </Card.Body>
+                  </Card>
+                </Col>
+              ))}
             </Row>
-            <br></br>
+            <br />
             <Row>
               <Col>
                 How were our results?
@@ -86,9 +108,10 @@ export default function Home() {
                 <Button variant="danger">Terrible</Button>{' '}
               </Col>
             </Row>
+            <br />
           </div>}
         </Container>
       </Form>
-    </div>
+    </div >
   )
 }
