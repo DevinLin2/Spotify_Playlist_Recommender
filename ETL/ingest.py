@@ -1,5 +1,3 @@
-# import copy
-import copy
 import datetime
 import heapq
 import os
@@ -7,7 +5,7 @@ from dotenv import load_dotenv
 import json
 
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, backref
-from sqlalchemy import create_engine, ForeignKey, Column, Integer, Date, DateTime, String, JSON, Boolean, Float
+from sqlalchemy import create_engine, ForeignKey, Column, Integer, Date, DateTime, String, JSON, Boolean, Float, inspect
 from sqlalchemy_utils import database_exists, create_database
 from collections import defaultdict, OrderedDict
 
@@ -49,8 +47,8 @@ Base = declarative_base(cls=Base)
 #   (See https://docs.sqlalchemy.org/en/20/orm/basic_relationships.html#association-object)
 class PlaylistTrack(Base):
     __tablename__ = 'playlist_track'
-    playlist_mpd_id = Column(Integer, ForeignKey('playlist.mpd_id', ondelete='CASCADE'), primary_key=True)
-    track_id = Column(String(22), ForeignKey('track.track_id'), primary_key=True)
+    playlist_mpd_id = Column(Integer, ForeignKey('playlist.playlist_mpd_id', ondelete='CASCADE'), primary_key=True)
+    track_id = Column(String(22), ForeignKey('track.track_id'))
     track_pos = Column(Integer, primary_key=True)
 
     track = relationship('Track', backref=backref('playlist_tracks', cascade="save-update, delete, delete-orphan"))
@@ -101,8 +99,8 @@ def feature_aggregate_attr_name(feature_name, aggregate_name):
 class Playlist(Base):
     __tablename__ = 'playlist'
 
-    mpd_id = Column(Integer, primary_key=True, autoincrement=False, unique=True, nullable=False)
-    name = Column(String(300), nullable=False)
+    playlist_mpd_id = Column(Integer, primary_key=True, autoincrement=False, unique=True, nullable=False)
+    playlist_name = Column(String(300), nullable=False)
     mpd_generated_at = Column(DateTime, nullable=False)
     modified_at = Column(Date, nullable=False)
     num_tracks = Column(Integer, nullable=False)
@@ -119,20 +117,21 @@ class Playlist(Base):
 
     for aggregate_name, aggregate_calc_func in AGGREGATES.items():
         for feature_name in FEATURE_NAMES:
-            vars()[feature_aggregate_attr_name(feature_name, aggregate_name)] = Column(Float)
+            vars()[feature_aggregate_attr_name(feature_name, aggregate_name)] = Column(Float, default=-1000000)
 
     tracks = relationship('PlaylistTrack', backref='playlist', cascade="save-update, delete, delete-orphan")
 
     def as_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
 
+
 class Track(Base):
     __tablename__ = 'track'
 
     track_id = Column(String(22), primary_key=True, unique=True, nullable=False, index=True)
     track_name = Column(String(300), nullable=False)
-    artist_id = Column(String(200), ForeignKey('artist.artist_id'), nullable=False)
-    artist_name = Column(String(200), nullable=False)
+    artist_id = Column(String(22), ForeignKey('artist.artist_id'), nullable=False)
+    artist_name = Column(String(300), nullable=False)
     album_id = Column(String(22), nullable=False)
     album_name = Column(String(300), nullable=False)
 
@@ -156,7 +155,7 @@ class Track(Base):
 class Artist(Base):
     __tablename__ = 'artist'
     artist_id = Column(String(22), primary_key=True, unique=True, nullable=False, index=True)
-    name = Column(String(200), nullable=False)
+    artist_name = Column(String(300), nullable=False)
     genres = Column(JSON, nullable=False)
     followers = Column(Integer, nullable=False)
     popularity = Column(Integer, nullable=False)
@@ -178,8 +177,8 @@ def sleeper():
         print(f'Sleeping for {sleep_seconds}s to not overload the Spotify API...')
         time.sleep(sleep_seconds)
 
-START_SLICE = 43
-NUM_OF_SLICES_TO_LOAD = 1
+START_SLICE = 104
+NUM_OF_SLICES_TO_LOAD = 8
 SLICE_SIZE = 1000
 
 batched_playlists = []
@@ -221,16 +220,16 @@ for slice_i in range(START_SLICE, START_SLICE + NUM_OF_SLICES_TO_LOAD):
     slice_playlists = mpd_slice_data['playlists']
     for playlist in slice_playlists:
         playlist_pid = playlist['pid']
-        if playlist_pid < 43690 or playlist_pid > 43690:
-            continue  # TODO REMOVE BREAK - THIS IS JUST FOR SMALLER TESTING DATA.
+        # if playlist_pid < 43690 or playlist_pid > 43690:
+        #     continue  # TODO REMOVE BREAK - THIS IS JUST FOR SMALLER TESTING DATA.
         if playlist_pid % 100 == 0:
             print(f'Loading playlists in range {playlist_pid} to {playlist_pid + 100}...')
         loaded_playlist_min_pid = min(playlist_pid, loaded_playlist_min_pid)
         loaded_playlist_max_pid = max(playlist_pid, loaded_playlist_max_pid)
         last_modified_epoch_seconds_utc = playlist['modified_at']
         last_modified_date_utc = datetime.datetime.utcfromtimestamp(last_modified_epoch_seconds_utc).date()
-        playlist_entity = Playlist(mpd_id=playlist_pid,
-                                   name=playlist['name'],
+        playlist_entity = Playlist(playlist_mpd_id=playlist_pid,
+                                   playlist_name=playlist['name'],
                                    mpd_generated_at=slice_generated_date_utc,
                                    modified_at=last_modified_date_utc,
                                    num_tracks=playlist['num_tracks'],
@@ -438,7 +437,7 @@ while artist_id_index < len(artist_ids):
         pulled_artist_genres[artist_id] = artist_data['genres']
 
         artist_entity = Artist(artist_id=artist_id,
-                               name=artist_data['name'],
+                               artist_name=artist_data['name'],
                                genres=artist_data['genres'],
                                followers=artist_data['followers']['total'],
                                popularity=artist_data['popularity'])
@@ -453,9 +452,9 @@ print('Calculating Playlist Genres and Aggregates...')
 calc_playlist_aggregates_time_counter_start = time.perf_counter()
 
 for playlist_entity in batched_playlists:
-    if playlist_entity.mpd_id % 100 == 0:
-        print(f'Calculating genres for playlists in range {playlist_entity.mpd_id} to'
-              f' {playlist_entity.mpd_id + 100}...')
+    if playlist_entity.playlist_mpd_id % 100 == 0:
+        print(f'Calculating genres for playlists in range {playlist_entity.playlist_mpd_id} to'
+              f' {playlist_entity.playlist_mpd_id + 100}...')
     genre_counts = defaultdict(float)
     # print(playlist_entity.name)
     for playlist_track in playlist_entity.tracks:
@@ -527,47 +526,41 @@ playlist_id_end_range = loaded_playlist_max_pid
 print(f'Deleting old database playlists from PID {playlist_id_start_range} to {playlist_id_end_range}...')
 # Note: Deleting the playlist cascade deletes the PlaylistTrack associations, but the tracks have to be deleted
 # separately since they are one to many with PlaylistTracks.
-session.query(Playlist).where(Playlist.mpd_id.in_(range(playlist_id_start_range, playlist_id_end_range + 1))).delete()
+session.query(Playlist).where(Playlist.playlist_mpd_id.in_(range(playlist_id_start_range, playlist_id_end_range + 1))).delete()
 
 # session.query(Track).where(Track.track_id.in_(all_unique_track_ids)).delete()
 session.commit()
 
-for playlist in batched_playlists:
-    to_delete = []
-    for playlist_track in playlist.tracks:
-        if hasattr(playlist_track, 'delete_me'):
-            to_delete.append(playlist_track)
+# for playlist in batched_playlists:
+#     to_delete = []
+#     for playlist_track in playlist.tracks:
+#         if hasattr(playlist_track, 'delete_me'):
+#             to_delete.append(playlist_track)
+#
+#     print(f"old: {len(playlist.tracks)}")
+#     for remove_me in to_delete:
+#         playlist.tracks.remove(remove_me)
+#     print(f"new: {len(playlist.tracks)}")
 
-    print(f"old: {len(playlist.tracks)}")
-    for remove_me in to_delete:
-        playlist.tracks.remove(remove_me)
-    print(f"new: {len(playlist.tracks)}")
+print('Copying objects to prevent ghost bugs...')
+s = time.perf_counter()
+
+playlist_cols = inspect(Playlist).attrs
+
+# bug fix with ghost playlist track:
+isolated_playlists = []
+for playlist in batched_playlists:
+    isolated_playlist = Playlist(playlist_mpd_id=playlist.playlist_mpd_id, tracks=[])
+    playlist_tracks = list(playlist.tracks)
+    for playlist_col in playlist_cols:
+        setattr(isolated_playlist, playlist_col.key, getattr(playlist, playlist_col.key))
+    isolated_playlist.tracks = playlist_tracks.copy()
+    isolated_playlists.append(isolated_playlist)
 
 print('Loading to database...')
-s = time.perf_counter()
+session.add_all(isolated_playlists)
+session.commit()
 session.close()
-for p in batched_playlists:
-    p.metadata = None
-    p.registry = None
-batched_playlists[0].tracks = batched_playlists[0].tracks[129:130]
-batched_playlists[0].tracks[0].metadata = None
-batched_playlists[0].tracks[0].registry = None
-oldPt = batched_playlists[0].tracks[0]
-oldT = batched_playlists[0].tracks[0].track
-oldP = batched_playlists[0]
-batched_playlists[0].tracks.clear()
-batched_playlists[0] = Playlist(mpd_id=oldP.mpd_id, tracks=[oldPt])
-
-# below still fails!:
-# batched_playlists[0].tracks.append(PlaylistTrack(track=Track(track_id="fake",
-#                                                              artist=oldT.artist,
-#                                                              acousticness=100000)))
-# batched_playlists2 = [playlist.as_dict() for playlist in batched_playlists]
-# batched_playlists2 = []
-session2 = Session()
-session2.add_all(batched_playlists)
-session2.commit()
-session2.close()
 
 
 loading_time_counter_end = time.perf_counter()
