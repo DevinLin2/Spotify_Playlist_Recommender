@@ -3,6 +3,7 @@ const client_secret = process.env.SPOTIFY_CLIENT_SECRET;
 const basic = Buffer.from(`${client_id}:${client_secret}`).toString('base64');
 const TOKEN_ENDPOINT = `https://accounts.spotify.com/api/token`;
 const PLAYLISTS_ENDPOINT = 'https://api.spotify.com/v1/me/playlists';
+const TRACK_ENDPOINT = `https://api.spotify.com/v1/tracks/11dFghVXANMlKmJXsNCbNl`;
 
 const getAccessToken = async (refresh_token) => {
   const response = await fetch(TOKEN_ENDPOINT, {
@@ -20,14 +21,14 @@ const getAccessToken = async (refresh_token) => {
   return response.json();
 };
 
-// export const getUsersPlaylists = async (refresh_token) => {
-//   const { access_token } = await getAccessToken(refresh_token);
-//   return fetch(PLAYLISTS_ENDPOINT, {
-//     headers: {
-//       Authorization: `Bearer ${access_token}`,
-//     },
-//   });
-// };
+export const getUsersPlaylists = async (refresh_token) => {
+  const { access_token } = await getAccessToken(refresh_token);
+  return fetch(PLAYLISTS_ENDPOINT, {
+    headers: {
+      Authorization: `Bearer ${access_token}`,
+    },
+  });
+};
 
 export const topTracks = async (refresh_token) => {
   const { access_token } = await getAccessToken(refresh_token);
@@ -38,3 +39,12 @@ export const topTracks = async (refresh_token) => {
     },
   });
 };
+
+// export const getTrackName = async (refresh_token) => {
+//   const { access_token } = await getAccessToken(refresh_token);
+//   return fetch("https://api.spotify.com/v1/tracks/11dFghVXANMlKmJXsNCbNl", {
+//     headers: {
+//       Authorization: `Bearer ${access_token}`,
+//     },
+//   });
+// };
