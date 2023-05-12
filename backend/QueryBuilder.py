@@ -56,15 +56,23 @@ def build_query(example, MAGIC = 0.2, LIMIT = 10):
 
     # GENRES NOT INCORPORATED YET
 
-    base = fr"""
-            SELECT mpd_id, pname
-            FROM master2
-            WHERE {sepOR(conds)}
-            GROUP BY mpd_id, pname
-            ORDER BY count(aname) desc
-            LIMIT {LIMIT}
-            """
-    
+    if len(conds) > 0:
+        base = fr"""
+                SELECT mpd_id, pname
+                FROM master2
+                WHERE {sepOR(conds)}
+                GROUP BY mpd_id, pname
+                ORDER BY count(aname) desc
+                LIMIT {LIMIT}
+                """
+    else: 
+        base = fr"""
+                SELECT mpd_id, pname
+                FROM master2
+                GROUP BY mpd_id, pname
+                ORDER BY count(aname) desc
+                LIMIT {LIMIT}
+                """
     return base
 
 

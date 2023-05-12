@@ -19,21 +19,22 @@ export default function Home() {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    const playlistResponse = await fetch(`http://localhost:8000/square/` + userInput);
+    const playlistResponse = await fetch(`http://localhost:8000/find-playlists-from-nl/` + userInput);
     const playlistProps = await playlistResponse.json();
     setResults(playlistProps);
-    setResults([
-      { name: "playlist1", tracks: ["song1", "song2", "song3"] },
-      { name: "playlist2", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist3", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist4", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist5", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist6", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist7", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist8", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist9", tracks: ["song4", "song5", "song6"] },
-      { name: "playlist10", tracks: ["song4", "song5", "song6"] }
-    ])
+    console.log(playlistProps);
+    // setResults([
+    //   { name: "playlist1", tracks: ["song1", "song2", "song3"] },
+    //   { name: "playlist2", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist3", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist4", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist5", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist6", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist7", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist8", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist9", tracks: ["song4", "song5", "song6"] },
+    //   { name: "playlist10", tracks: ["song4", "song5", "song6"] }
+    // ])
     setShowResult(true);
   }
 
@@ -84,11 +85,11 @@ export default function Home() {
                   <Card>
                     <Card.Img variant="top" src="holder.js/100px160" />
                     <Card.Body>
-                      <Card.Title>{results[idx].name}</Card.Title>
+                      <Card.Title>{results[idx].playlist_name}</Card.Title>
                       <Card.Text>
-                        {results[idx].tracks[0]}<br />
-                        {results[idx].tracks[1]}<br />
-                        {results[idx].tracks[2]}<br />
+                        {results[idx].songs[0].track_name}<br />
+                        {results[idx].songs[1].track_name}<br />
+                        {results[idx].songs[2].track_name}<br />
                       </Card.Text>
                     </Card.Body>
                   </Card>
